@@ -1,88 +1,165 @@
 <!DOCTYPE html>
-<html>
-<head>
-    <title>Eyewear Parameter Calculator</title>
-</head>
-<body>
-    <h1>Eyewear Parameter Calculator</h1>
-    <p>ระบบวัดค่าพารามิเตอร์แว่นตา</p>
-</body>
-<!DOCTYPE html>
 <html lang="th">
 <head>
     <meta charset="UTF-8">
-    <title>Optical Scale Measurement</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Optometry Measurement Tool</title>
     <style>
-        canvas { border: 1px solid #000; cursor: crosshair; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #1c1c1e; color: #fff; text-align: center; }
+        #toolbar { background: #2c2c2e; padding: 12px; display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; position: sticky; top: 0; z-index: 10; }
+        button, label.btn { background: #0a84ff; color: white; border: none; padding: 10px 16px; border-radius: 8px; font-size: 14px; cursor: pointer; font-weight: bold; }
+        button.active { background: #30d158; }
+        button.danger { background: #ff453a; }
+        input[type="file"] { display: none; }
+        #info-panel { background: #3a3a3c; padding: 10px; font-size: 15px; font-weight: bold; color: #ffd60a; }
+        #canvas-container { position: relative; margin: 20px auto; display: inline-block; max-width: 95vw; border: 1px solid #444; }
+        canvas { display: block; max-width: 100%; cursor: crosshair; }
     </style>
 </head>
 <body>
-    <h3>ระบบวัดพารามิเตอร์แว่นตา (Pixel to mm)</h3>
-    <p id="status">ขั้นตอนที่ 1: คลิก 2 จุดที่ขอบวัตถุอ้างอิง (เช่น บัตรเครดิต 85.6 mm)</p>
-    
-    <canvas id="canvas" width="600" height="400"></canvas>
-    
-    <script>
-        const canvas = document.getElementById('canvas');
-        const ctx = canvas.getContext('2d');
-        const statusText = document.getElementById('status');
 
-        const REF_KNOWN_MM = 85.60; // ขนาดจริงของวัตถุอ้างอิง (mm)
-        let clicks = [];
-        let scaleFactor = 0; // mm per pixel
+<div id="toolbar">
+    <label class="btn" for="fileInput">📁 โหลดรูปภาพ</label>
+    <input type="file" id="fileInput" accept="image/*">
+    <button id="btnCalib" class="active" onclick="setMode('calib')">1. ลากเส้นอ้างอิง (Calibrate)</button>
+    <button id="btnMeasure" onclick="setMode('measure')">2. ลากวัดระยะ (mm)</button>
+    <button id="btnAngle" onclick="setMode('angle')">3. วัดองศา (°)</button>
+    <button class="danger" onclick="clearAll()">🔄 ล้างค่าทั้งหมด</button>
+</div>
 
-        // ฟังก์ชันคำนวณระยะทางระหว่าง 2 จุด (พิกเซล)
-        function getDistance(p1, p2) {
-            return Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
+<div id="info-panel">สถานะ: กรุณาถ่าย/โหลดรูป แล้วลากเส้นอ้างอิง (เช่น เส้น 10 mm)</div>
+
+<div id="canvas-container">
+    <canvas id="canvas"></canvas>
+</div>
+
+<script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const info = document.getElementById('info-panel');
+    
+    let img = new Image();
+    let mode = 'calib';
+    let points = [];
+    let scale = 0;
+    let measurements = [];
+
+    document.getElementById('fileInput').addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = function(event) {
+            img.onload = function() {
+                canvas.width = img.width;
+                canvas.height = img.height;
+                resetData();
+                draw();
+            }
+            img.src = event.target.result;
         }
+        reader.readAsDataURL(file);
+    });
 
-        // ดักจับเหตุการณ์การคลิกบน Canvas
-        canvas.addEventListener('click', (e) => {
-            const rect = canvas.getBoundingClientRect();
-            // แปลงพิกัดการคลิกบนหน้าจอให้ตรงกับพิกัดบน Canvas
-            const x = e.clientX - rect.left;
-            const y = e.clientY - rect.top;
+    function setMode(newMode) {
+        mode = newMode;
+        points = [];
+        document.querySelectorAll('#toolbar button').forEach(b => b.classList.remove('active'));
+        if (mode === 'calib') {
+            document.getElementById('btnCalib').classList.add('active');
+            info.innerText = "โหมด 1: จิ้มปักจุด 2 จุด ทาบวัตถุอ้างอิง (เพื่อตั้งสเกล)";
+        } else if (mode === 'measure') {
+            if (scale === 0) { alert("กรุณาทำขั้นตอนที่ 1 (Calibrate สเกล) ก่อนครับ"); setMode('calib'); return; }
+            document.getElementById('btnMeasure').classList.add('active');
+            info.innerText = "โหมด 2: จิ้มปักจุด 2 จุด เพื่อวัดความยาว (mm)";
+        } else if (mode === 'angle') {
+            document.getElementById('btnAngle').classList.add('active');
+            info.innerText = "โหมด 3: จิ้มปักจุด 3 จุด เพื่อวัดองศา (°) [จุดที่ 2 คือจุดยอดมุม]";
+        }
+    }
 
-            clicks.push({ x, y });
+    canvas.addEventListener('click', function(e) {
+        if (!img.src) return;
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+        const x = (e.clientX - rect.left) * scaleX;
+        const y = (e.clientY - rect.top) * scaleY;
 
-            // วาดจุดสีแดงตรงตำแหน่งที่คลิก
-            ctx.fillStyle = 'red';
+        points.push({x, y});
+
+        if (mode === 'calib' && points.length === 2) {
+            const distPx = Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y);
+            const realMm = prompt("กรอกความยาวจริงของเส้นนี้ (มิลลิเมตร):", "10");
+            if (realMm && !isNaN(realMm) && realMm > 0) {
+                scale = parseFloat(realMm) / distPx;
+                info.innerText = `ตั้งสเกลสำเร็จ: 1 Pixel = ${(scale).toFixed(4)} mm (เริ่มวัดความยาวได้ทันที)`;
+                setMode('measure');
+            } else {
+                points = [];
+            }
+        } else if (mode === 'measure' && points.length === 2) {
+            const distPx = Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y);
+            const distMm = distPx * scale;
+            measurements.push({ type: 'line', p1: points[0], p2: points[1], val: distMm.toFixed(2) + ' mm' });
+            points = [];
+            draw();
+        } else if (mode === 'angle' && points.length === 3) {
+            const angle = calcAngle(points[0], points[1], points[2]);
+            measurements.push({ type: 'angle', p1: points[0], p2: points[1], p3: points[2], val: angle.toFixed(1) + '°' });
+            points = [];
+            draw();
+        }
+        draw();
+    });
+
+    function calcAngle(p1, p2, p3) {
+        const a = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+        const b = Math.hypot(p2.x - p3.x, p2.y - p3.y);
+        const c = Math.hypot(p3.x - p1.x, p3.y - p1.y);
+        const rad = Math.acos((a*a + b*b - c*c) / (2 * a * b));
+        return rad * (180 / Math.PI);
+    }
+
+    function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        if (img.src) ctx.drawImage(img, 0, 0);
+
+        measurements.forEach(m => {
             ctx.beginPath();
-            ctx.arc(x, y, 4, 0, Math.PI * 2);
-            ctx.fill();
-
-            // คำนวณตามลำดับขั้นตอน
-            if (clicks.length === 2 && scaleFactor === 0) {
-                // ขั้นตอนตั้งค่า Scale
-                const refPx = getDistance(clicks[0], clicks[1]);
-                scaleFactor = REF_KNOWN_MM / refPx;
-                
-                // วาดเส้นเชื่อมจุดอ้างอิง
-                drawLine(clicks[0], clicks[1], 'blue');
-                statusText.innerText = `Calibrated! (1 px = ${scaleFactor.toFixed(4)} mm) \nขั้นตอนที่ 2: คลิก 2 จุดเพื่อวัดค่า PD หรือพารามิเตอร์`;
-                clicks = []; // ล้างค่าจุดเพื่อเตรียมวัดพารามิเตอร์จริง
-            } 
-            else if (clicks.length === 2 && scaleFactor > 0) {
-                // ขั้นตอนวัดค่าจริง (เช่น PD / Fitting Height)
-                const targetPx = getDistance(clicks[0], clicks[1]);
-                const measuredMm = targetPx * scaleFactor;
-                
-                drawLine(clicks[0], clicks[1], 'green');
-                statusText.innerText = `ผลการวัด: ${measuredMm.toFixed(2)} mm (${targetPx.toFixed(1)} px)`;
-                clicks = []; // ล้างค่าจุดสำหรับวัดครั้งต่อไป
+            ctx.lineWidth = Math.max(3, canvas.width / 300);
+            if (m.type === 'line') {
+                ctx.strokeStyle = '#30d158';
+                ctx.moveTo(m.p1.x, m.p1.y); ctx.lineTo(m.p2.x, m.p2.y);
+                ctx.stroke();
+                drawText(m.val, (m.p1.x + m.p2.x)/2, (m.p1.y + m.p2.y)/2, '#30d158');
+            } else if (m.type === 'angle') {
+                ctx.strokeStyle = '#ff9f0a';
+                ctx.moveTo(m.p1.x, m.p1.y); ctx.lineTo(m.p2.x, m.p2.y); ctx.lineTo(m.p3.x, m.p3.y);
+                ctx.stroke();
+                drawText(m.val, m.p2.x, m.p2.y - 15, '#ff9f0a');
             }
         });
 
-        function drawLine(p1, p2, color) {
-            ctx.strokeStyle = color;
-            ctx.lineWidth = 2;
+        points.forEach((p) => {
             ctx.beginPath();
-            ctx.moveTo(p1.x, p1.y);
-            ctx.lineTo(p2.x, p2.y);
-            ctx.stroke();
-        }
-    </script>
-</body>
-</html>
+            ctx.arc(p.x, p.y, Math.max(5, canvas.width/150), 0, Math.PI * 2);
+            ctx.fillStyle = '#ff453a';
+            ctx.fill();
+        });
+    }
 
+    function drawText(text, x, y, color) {
+        ctx.font = `bold ${Math.max(18, canvas.width/40)}px sans-serif`;
+        ctx.fillStyle = color;
+        ctx.shadowColor = "black";
+        ctx.shadowBlur = 4;
+        ctx.fillText(text, x, y);
+        ctx.shadowBlur = 0;
+    }
+
+    function resetData() { points = []; measurements = []; scale = 0; }
+    function clearAll() { resetData(); draw(); setMode('calib'); }
+</script>
+</body>
 </html>

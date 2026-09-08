@@ -62,6 +62,9 @@
     let activePointers = new Map();
     let initialPinchDistance = null;
 
+    // ตัวแปรสำหรับจัดการการลากจุด (Dragging Point)
+    let draggedPointRef = null; // เก็บ Reference ของจุดที่กำลังลาก
+
     document.getElementById('fileInput').addEventListener('change', function(e) {
         const file = e.target.files[0];
         if (!file) return;
@@ -95,11 +98,11 @@
         
         if (mode === 'calib') {
             document.getElementById('btnCalib').classList.add('active');
-            info.innerText = "โหมด 1: จิ้มปักจุด 2 จุด เพื่อกำหนดเส้นอ้างอิงและใส่ความยาวจริง (ใช้นิ้วหนีบเพื่อ Zoom ได้)";
+            info.innerText = "โหมด 1: จิ้มปักจุด 2 จุด เพื่อกำหนดเส้นอ้างอิง (สามารถกดค้างที่จุดเพื่อลากปรับตำแหน่งละเอียดได้)";
         } else if (mode === 'measure') {
             if (scale === 0) { alert("กรุณาทำขั้นตอนที่ 1 (ตั้งสเกลอ้างอิง) ก่อนครับ"); setMode('calib'); return; }
             document.getElementById('btnMeasure').classList.add('active');
-            info.innerText = "โหมด 2: จิ้มปักจุด 2 จุด เพื่อวัดระยะ Manual (เส้นสีแดง)";
+            info.innerText = "โหมด 2: จิ้มปักจุด 2 จุด เพื่อวัดระยะ Manual (กดค้างที่จุดเพื่อลากปรับแก้ไขได้)";
         } else if (mode === 'angle') {
             document.getElementById('btnAngle').classList.add('active');
             info.innerText = "โหมด 3: จิ้มปักจุด 3 จุด เพื่อวัดองศา (°) [จุดที่ 2 คือจุดยอดมุม]";
@@ -110,21 +113,62 @@
         draw();
     }
 
-    // แปลงพิกัดจากหน้าจอ ไปเป็นพิกัดจริงบนรูปภาพ (ตามค่า Zoom และ Pan)
     function getImgCoords(e) {
         const rect = canvas.getBoundingClientRect();
-        const clientX = e.clientX;
-        const clientY = e.clientY;
-        
-        // แปลงพิกัดหน้าจอเป็นพิกัด Canvas
-        const canvasX = (clientX - rect.left) * (canvas.width / rect.width);
-        const canvasY = (clientY - rect.top) * (canvas.height / rect.height);
+        const canvasX = (e.clientX - rect.left) * (canvas.width / rect.width);
+        const canvasY = (e.clientY - rect.top) * (canvas.height / rect.height);
 
-        // คำนวณย้อนกลับจาก Matrix Transformation
         const imgX = (canvasX - panX) / zoomScale;
         const imgY = (canvasY - panY) / zoomScale;
 
         return { x: imgX, y: imgY };
+    }
+
+    // ฟังก์ชันค้นหาว่าจุดที่กดใกล้ออบเจกต์จุดใดบ้าง (Hit Testing)
+    function findNearestPoint(imgPt) {
+        // ระยะความไวในการใช้นิ้วแตะจับจุด ( Hit Radius )
+        const threshold = Math.max(15, (canvas.width / 50) / zoomScale);
+
+        // 1. เช็กจุดที่กำลังปักอยู่ปัจจุบัน
+        for (let p of points) {
+            if (Math.hypot(p.x - imgPt.x, p.y - imgPt.y) < threshold) return p;
+        }
+
+        // 2. เช็กจุดของเส้น Calibration
+        if (calibLine) {
+            if (Math.hypot(calibLine.p1.x - imgPt.x, calibLine.p1.y - imgPt.y) < threshold) return calibLine.p1;
+            if (Math.hypot(calibLine.p2.x - imgPt.x, calibLine.p2.y - imgPt.y) < threshold) return calibLine.p2;
+        }
+
+        // 3. เช็กจุดของเส้นวัดระยะทั้งหมด
+        for (let m of measurements) {
+            if (Math.hypot(m.p1.x - imgPt.x, m.p1.y - imgPt.y) < threshold) return m.p1;
+            if (Math.hypot(m.p2.x - imgPt.x, m.p2.y - imgPt.y) < threshold) return m.p2;
+            if (m.p3 && Math.hypot(m.p3.x - imgPt.x, m.p3.y - imgPt.y) < threshold) return m.p3;
+        }
+
+        return null;
+    }
+
+    // อัปเดตการคำนวณค่าระยะและองศาใหม่ เมื่อจุดขยับ
+    function recalculateMeasurements() {
+        if (calibLine) {
+            const distPx = Math.hypot(calibLine.p2.x - calibLine.p1.x, calibLine.p2.y - calibLine.p1.y);
+            const rawMm = parseFloat(calibLine.val);
+            if (!isNaN(rawMm) && distPx > 0) {
+                scale = rawMm / distPx;
+            }
+        }
+
+        measurements.forEach(m => {
+            if (m.type === 'line') {
+                const distPx = Math.hypot(m.p2.x - m.p1.x, m.p2.y - m.p1.y);
+                m.val = (distPx * scale).toFixed(2) + ' mm';
+            } else if (m.type === 'angle') {
+                const angle = calcAngle(m.p1, m.p2, m.p3);
+                m.val = angle.toFixed(1) + '°';
+            }
+        });
     }
 
     // --- EVENT LISTENERS สำหรับสัมผัส & เมาส์ ---
@@ -133,11 +177,21 @@
         canvas.setPointerCapture(e.pointerId);
         activePointers.set(e.pointerId, e);
 
-        // ถ้ามีการแตะ 2 นิ้วขึ้นไป -> บังคับเปลี่ยนเป็นโหมด Pan/Zoom ทันที
+        // กรณีแตะ 2 นิ้วขึ้นไป -> Zoom/Pan
         if (activePointers.size >= 2) {
+            draggedPointRef = null;
             isPanning = false;
             const pts = Array.from(activePointers.values());
             initialPinchDistance = Math.hypot(pts[0].clientX - pts[1].clientX, pts[0].clientY - pts[1].clientY);
+            return;
+        }
+
+        const imgPt = getImgCoords(e);
+
+        // ตรวจหาว่าผู้ใช้กดลงบนจุด Marking เพื่อเตรียมลากขยับหรือไม่
+        const hitPoint = findNearestPoint(imgPt);
+        if (hitPoint) {
+            draggedPointRef = hitPoint; // เข้าสู่สถานะลากจุด
             return;
         }
 
@@ -152,7 +206,7 @@
         if (!img.src) return;
         activePointers.set(e.pointerId, e);
 
-        // จัดการซูมแบบใช้นิ้วถ่าง/หนีบ (Pinch-to-Zoom)
+        // การจัดการ Multi-touch Zoom
         if (activePointers.size >= 2) {
             const pts = Array.from(activePointers.values());
             const currentDist = Math.hypot(pts[0].clientX - pts[1].clientX, pts[0].clientY - pts[1].clientY);
@@ -166,7 +220,17 @@
             return;
         }
 
-        // จัดการการลากย้ายรูป
+        // กรณีอยู่ในสถานะกำลังลากจุด
+        if (draggedPointRef) {
+            const imgPt = getImgCoords(e);
+            draggedPointRef.x = imgPt.x;
+            draggedPointRef.y = imgPt.y;
+            recalculateMeasurements();
+            draw();
+            return;
+        }
+
+        // การลากย้ายภาพ
         if (isPanning && mode === 'pan') {
             panX = e.clientX - startPanX;
             panY = e.clientY - startPanY;
@@ -176,19 +240,24 @@
 
     canvas.addEventListener('pointerup', function(e) {
         if (!img.src) return;
+
+        // ปล่อยจุดที่กำลังลาก
+        if (draggedPointRef) {
+            draggedPointRef = null;
+            activePointers.delete(e.pointerId);
+            return;
+        }
         
-        // ถ้าเป็นการใช้นิ้วถ่างซูมเสร็จแล้ว ปล่อยนิ้ว ให้เคลียร์ค่า
         if (activePointers.size >= 2) {
             activePointers.delete(e.pointerId);
             if (activePointers.size < 2) initialPinchDistance = null;
             return;
         }
 
-        // กรณีปักจุดวัดระยะ (ทำงานเฉพาะตอนใช้นิ้วเดียว และไม่ได้อยู่ในโหมด pan)
+        // การจิ้มเพิ่มจุดใหม่ (ทำงานเฉพาะเมื่อไม่ใช่การลากขยับจุดหรือย้ายรูป)
         if (activePointers.size === 1 && !isPanning && mode !== 'pan') {
             const p = getImgCoords(e);
             
-            // ตรวจสอบว่าพิกัดที่กดอยู่ในขอบเขตของรูปภาพหรือไม่
             if (p.x >= 0 && p.x <= img.width && p.y >= 0 && p.y <= img.height) {
                 points.push(p);
 
@@ -199,7 +268,7 @@
                         const realMm = prompt("กรอกความยาวจริงของเส้นอ้างอิงนี้ (มิลลิเมตร):", "10");
                         if (realMm && !isNaN(realMm) && parseFloat(realMm) > 0) {
                             scale = parseFloat(realMm) / distPx;
-                            calibLine = { p1: points[0], p2: points[1], val: parseFloat(realMm).toFixed(2) + ' mm (Ref)' };
+                            calibLine = { p1: points[0], p2: points[1], val: parseFloat(realMm).toFixed(2) + ' mm' };
                             info.innerText = `ตั้งสเกลสำเร็จ: 1 px = ${(scale).toFixed(4)} mm (เริ่มวัดระยะเส้นสีแดงได้เลย)`;
                             points = [];
                             setMode('measure');
@@ -232,16 +301,15 @@
     canvas.addEventListener('pointercancel', function(e) {
         activePointers.delete(e.pointerId);
         isPanning = false;
+        draggedPointRef = null;
     });
 
-    // รองรับการใช้ Scroll Wheel ของเมาส์ในการ Zoom
     canvas.addEventListener('wheel', function(e) {
         e.preventDefault();
         const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9;
         zoomScale = Math.max(0.5, Math.min(10, zoomScale * zoomFactor));
         draw();
     }, { passive: false });
-
 
     function calcAngle(p1, p2, p3) {
         const a = Math.hypot(p2.x - p1.x, p2.y - p1.y);
@@ -253,20 +321,16 @@
         return Math.acos(clampedCos) * (180 / Math.PI);
     }
 
-    // --- ฟังก์ชันวาด Canvas ตามสถานะ Zoom/Pan ---
     function draw() {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         if (!img.src) return;
 
         ctx.save();
-        // ปรับ Transformation matrix สำหรับ Zoom และ Pan
         ctx.translate(panX, panY);
         ctx.scale(zoomScale, zoomScale);
 
-        // วาดรูปภาพ
         ctx.drawImage(img, 0, 0);
 
-        // ความหนาเส้นที่ปรับสัดส่วนตามระดับการ Zoom
         const lineWidth = Math.max(2, (canvas.width / 400) / zoomScale);
 
         // 1. วาดเส้นอ้างอิง Calibration (เส้นสีขาว)
@@ -277,7 +341,7 @@
             ctx.moveTo(calibLine.p1.x, calibLine.p1.y);
             ctx.lineTo(calibLine.p2.x, calibLine.p2.y);
             ctx.stroke();
-            drawText(calibLine.val, (calibLine.p1.x + calibLine.p2.x)/2, (calibLine.p1.y + calibLine.p2.y)/2 - (10 / zoomScale), '#ffffff');
+            drawText(calibLine.val + ' (Ref)', (calibLine.p1.x + calibLine.p2.x)/2, (calibLine.p1.y + calibLine.p2.y)/2 - (10 / zoomScale), '#ffffff');
             
             drawPoint(calibLine.p1, '#ffffff');
             drawPoint(calibLine.p2, '#ffffff');
@@ -323,12 +387,19 @@
     }
 
     function drawPoint(p, color) {
-        // รัศมีจุดปรับสัดส่วนตามระดับ Zoom ไม่ให้จุดขยายใหญ่ออกนอกหน้าจอ
         const radius = Math.max(1.5, (canvas.width / 600) / zoomScale);
         ctx.beginPath();
         ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
         ctx.fillStyle = color;
         ctx.fill();
+
+        // เพิ่มวงกลมจางๆ รอบจุดเมื่อจุดนั้นกำลังถูกดึงลาก
+        if (draggedPointRef === p) {
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, radius * 3, 0, Math.PI * 2);
+            ctx.fillStyle = "rgba(255, 214, 10, 0.4)";
+            ctx.fill();
+        }
     }
 
     function drawText(text, x, y, color) {

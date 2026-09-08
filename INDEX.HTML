@@ -7,4 +7,82 @@
     <h1>Eyewear Parameter Calculator</h1>
     <p>ระบบวัดค่าพารามิเตอร์แว่นตา</p>
 </body>
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <title>Optical Scale Measurement</title>
+    <style>
+        canvas { border: 1px solid #000; cursor: crosshair; }
+    </style>
+</head>
+<body>
+    <h3>ระบบวัดพารามิเตอร์แว่นตา (Pixel to mm)</h3>
+    <p id="status">ขั้นตอนที่ 1: คลิก 2 จุดที่ขอบวัตถุอ้างอิง (เช่น บัตรเครดิต 85.6 mm)</p>
+    
+    <canvas id="canvas" width="600" height="400"></canvas>
+    
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const statusText = document.getElementById('status');
+
+        const REF_KNOWN_MM = 85.60; // ขนาดจริงของวัตถุอ้างอิง (mm)
+        let clicks = [];
+        let scaleFactor = 0; // mm per pixel
+
+        // ฟังก์ชันคำนวณระยะทางระหว่าง 2 จุด (พิกเซล)
+        function getDistance(p1, p2) {
+            return Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
+        }
+
+        // ดักจับเหตุการณ์การคลิกบน Canvas
+        canvas.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            // แปลงพิกัดการคลิกบนหน้าจอให้ตรงกับพิกัดบน Canvas
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            clicks.push({ x, y });
+
+            // วาดจุดสีแดงตรงตำแหน่งที่คลิก
+            ctx.fillStyle = 'red';
+            ctx.beginPath();
+            ctx.arc(x, y, 4, 0, Math.PI * 2);
+            ctx.fill();
+
+            // คำนวณตามลำดับขั้นตอน
+            if (clicks.length === 2 && scaleFactor === 0) {
+                // ขั้นตอนตั้งค่า Scale
+                const refPx = getDistance(clicks[0], clicks[1]);
+                scaleFactor = REF_KNOWN_MM / refPx;
+                
+                // วาดเส้นเชื่อมจุดอ้างอิง
+                drawLine(clicks[0], clicks[1], 'blue');
+                statusText.innerText = `Calibrated! (1 px = ${scaleFactor.toFixed(4)} mm) \nขั้นตอนที่ 2: คลิก 2 จุดเพื่อวัดค่า PD หรือพารามิเตอร์`;
+                clicks = []; // ล้างค่าจุดเพื่อเตรียมวัดพารามิเตอร์จริง
+            } 
+            else if (clicks.length === 2 && scaleFactor > 0) {
+                // ขั้นตอนวัดค่าจริง (เช่น PD / Fitting Height)
+                const targetPx = getDistance(clicks[0], clicks[1]);
+                const measuredMm = targetPx * scaleFactor;
+                
+                drawLine(clicks[0], clicks[1], 'green');
+                statusText.innerText = `ผลการวัด: ${measuredMm.toFixed(2)} mm (${targetPx.toFixed(1)} px)`;
+                clicks = []; // ล้างค่าจุดสำหรับวัดครั้งต่อไป
+            }
+        });
+
+        function drawLine(p1, p2, color) {
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(p1.x, p1.y);
+            ctx.lineTo(p2.x, p2.y);
+            ctx.stroke();
+        }
+    </script>
+</body>
+</html>
+
 </html>

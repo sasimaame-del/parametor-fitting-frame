@@ -7,6 +7,58 @@
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #1c1c1e; color: #fff; text-align: center; }
+        
+        /* หน้า Login Screen */
+        #login-screen {
+            position: fixed;
+            top: 0; left: 0; width: 100vw; height: 100vh;
+            background: #1c1c1e;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 999;
+        }
+        .login-card {
+            background: #2c2c2e;
+            padding: 30px 24px;
+            border-radius: 16px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+            width: 90%;
+            max-width: 360px;
+        }
+        .login-card h2 { margin-bottom: 20px; font-size: 20px; color: #0a84ff; }
+        .login-card input {
+            width: 100%;
+            padding: 12px;
+            margin-bottom: 12px;
+            border-radius: 8px;
+            border: 1px solid #444;
+            background: #3a3a3c;
+            color: #fff;
+            font-size: 15px;
+            outline: none;
+        }
+        .login-card input:focus { border-color: #0a84ff; }
+        .login-card button {
+            width: 100%;
+            padding: 12px;
+            border-radius: 8px;
+            border: none;
+            background: #30d158;
+            color: white;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        #login-error {
+            color: #ff453a;
+            font-size: 13px;
+            margin-top: 10px;
+            display: none;
+        }
+
+        /* หน้าแอปจริง */
+        #main-app { display: none; }
         #toolbar { background: #2c2c2e; padding: 12px; display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; position: sticky; top: 0; z-index: 10; }
         button, label.btn { background: #0a84ff; color: white; border: none; padding: 10px 16px; border-radius: 8px; font-size: 14px; cursor: pointer; font-weight: bold; }
         button.active { background: #30d158; }
@@ -20,25 +72,57 @@
 </head>
 <body>
 
-<div id="toolbar">
-    <label class="btn" for="fileInput">📁 โหลดรูปภาพ</label>
-    <input type="file" id="fileInput" accept="image/*">
-    <button id="btnCalib" class="active" onclick="setMode('calib')">1. ตั้งสเกลอ้างอิง</button>
-    <button id="btnMeasure" onclick="setMode('measure')">2. วัดระยะ (mm)</button>
-    <button id="btnAngle" onclick="setMode('angle')">3. วัดองศา (°)</button>
-    <button id="btnPan" onclick="setMode('pan')">🔍 ย้าย/ซูมรูป</button>
-    <button onclick="resetZoom()">🎯 รีเซ็ตมุมมอง</button>
-    <button class="warning" onclick="undo()">↩️ ย้อนกลับ</button>
-    <button class="danger" onclick="clearAll()">🔄 ล้างค่าทั้งหมด</button>
+<!-- หน้าสำหรับกรอกรหัสผ่าน -->
+<div id="login-screen">
+    <div class="login-card">
+        <h2>🔒 เข้าสู่ระบบใช้งาน</h2>
+        <form onsubmit="handleLogin(event)">
+            <input type="text" id="username" placeholder="Username" required autocomplete="username">
+            <input type="password" id="password" placeholder="Password" required autocomplete="current-password">
+            <button type="submit">ตกลง</button>
+            <div id="login-error">ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง</div>
+        </form>
+    </div>
 </div>
 
-<div id="info-panel">สถานะ: กรุณาถ่าย/โหลดรูป แล้วลากเส้นอ้างอิง</div>
+<!-- หน้าเครื่องมือวัดพารามิเตอร์ -->
+<div id="main-app">
+    <div id="toolbar">
+        <label class="btn" for="fileInput">📁 โหลดรูปภาพ</label>
+        <input type="file" id="fileInput" accept="image/*">
+        <button id="btnCalib" class="active" onclick="setMode('calib')">1. ตั้งสเกลอ้างอิง</button>
+        <button id="btnMeasure" onclick="setMode('measure')">2. วัดระยะ (mm)</button>
+        <button id="btnAngle" onclick="setMode('angle')">3. วัดองศา (°)</button>
+        <button id="btnPan" onclick="setMode('pan')">🔍 ย้าย/ซูมรูป</button>
+        <button onclick="resetZoom()">🎯 รีเซ็ตมุมมอง</button>
+        <button class="warning" onclick="undo()">↩️ ย้อนกลับ</button>
+        <button class="danger" onclick="clearAll()">🔄 ล้างค่าทั้งหมด</button>
+    </div>
 
-<div id="canvas-container">
-    <canvas id="canvas"></canvas>
+    <div id="info-panel">สถานะ: กรุณาถ่าย/โหลดรูป แล้วลากเส้นอ้างอิง</div>
+
+    <div id="canvas-container">
+        <canvas id="canvas"></canvas>
+    </div>
 </div>
 
 <script>
+    // ระบบ Login Validation
+    function handleLogin(e) {
+        e.preventDefault();
+        const u = document.getElementById('username').value.trim();
+        const p = document.getElementById('password').value.trim();
+        const errorDiv = document.getElementById('login-error');
+
+        if (u === '805optical' && p === 'thispagewascreatedby805') {
+            document.getElementById('login-screen').style.display = 'none';
+            document.getElementById('main-app').style.display = 'block';
+        } else {
+            errorDiv.style.display = 'block';
+        }
+    }
+
+    // --- ส่วนงาน Canvas & Measurement ---
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
     const info = document.getElementById('info-panel');
@@ -50,7 +134,6 @@
     let calibLine = null;
     let measurements = [];
 
-    // ตัวแปรสำหรับจัดการการ Zoom และ Pan
     let zoomScale = 1;
     let panX = 0;
     let panY = 0;
@@ -58,12 +141,9 @@
     let startPanX = 0;
     let startPanY = 0;
     
-    // สำหรับจัดการ Multi-touch บนมือถือ
     let activePointers = new Map();
     let initialPinchDistance = null;
-
-    // ตัวแปรสำหรับจัดการการลากจุด (Dragging Point)
-    let draggedPointRef = null; // เก็บ Reference ของจุดที่กำลังลาก
+    let draggedPointRef = null;
 
     document.getElementById('fileInput').addEventListener('change', function(e) {
         const file = e.target.files[0];
@@ -98,11 +178,11 @@
         
         if (mode === 'calib') {
             document.getElementById('btnCalib').classList.add('active');
-            info.innerText = "โหมด 1: จิ้มปักจุด 2 จุด เพื่อกำหนดเส้นอ้างอิง (สามารถกดค้างที่จุดเพื่อลากปรับตำแหน่งละเอียดได้)";
+            info.innerText = "โหมด 1: จิ้มปักจุด 2 จุด เพื่อกำหนดเส้นอ้างอิง (ลากจุดจะมีแว่นขยายช่วยเล็ง)";
         } else if (mode === 'measure') {
             if (scale === 0) { alert("กรุณาทำขั้นตอนที่ 1 (ตั้งสเกลอ้างอิง) ก่อนครับ"); setMode('calib'); return; }
             document.getElementById('btnMeasure').classList.add('active');
-            info.innerText = "โหมด 2: จิ้มปักจุด 2 จุด เพื่อวัดระยะ Manual (กดค้างที่จุดเพื่อลากปรับแก้ไขได้)";
+            info.innerText = "โหมด 2: จิ้มปักจุด 2 จุด เพื่อวัดระยะ Manual (ลากจุดจะมีแว่นขยายช่วยเล็ง)";
         } else if (mode === 'angle') {
             document.getElementById('btnAngle').classList.add('active');
             info.innerText = "โหมด 3: จิ้มปักจุด 3 จุด เพื่อวัดองศา (°) [จุดที่ 2 คือจุดยอดมุม]";
@@ -124,23 +204,18 @@
         return { x: imgX, y: imgY };
     }
 
-    // ฟังก์ชันค้นหาว่าจุดที่กดใกล้ออบเจกต์จุดใดบ้าง (Hit Testing)
     function findNearestPoint(imgPt) {
-        // ระยะความไวในการใช้นิ้วแตะจับจุด ( Hit Radius )
         const threshold = Math.max(15, (canvas.width / 50) / zoomScale);
 
-        // 1. เช็กจุดที่กำลังปักอยู่ปัจจุบัน
         for (let p of points) {
             if (Math.hypot(p.x - imgPt.x, p.y - imgPt.y) < threshold) return p;
         }
 
-        // 2. เช็กจุดของเส้น Calibration
         if (calibLine) {
             if (Math.hypot(calibLine.p1.x - imgPt.x, calibLine.p1.y - imgPt.y) < threshold) return calibLine.p1;
             if (Math.hypot(calibLine.p2.x - imgPt.x, calibLine.p2.y - imgPt.y) < threshold) return calibLine.p2;
         }
 
-        // 3. เช็กจุดของเส้นวัดระยะทั้งหมด
         for (let m of measurements) {
             if (Math.hypot(m.p1.x - imgPt.x, m.p1.y - imgPt.y) < threshold) return m.p1;
             if (Math.hypot(m.p2.x - imgPt.x, m.p2.y - imgPt.y) < threshold) return m.p2;
@@ -150,7 +225,6 @@
         return null;
     }
 
-    // อัปเดตการคำนวณค่าระยะและองศาใหม่ เมื่อจุดขยับ
     function recalculateMeasurements() {
         if (calibLine) {
             const distPx = Math.hypot(calibLine.p2.x - calibLine.p1.x, calibLine.p2.y - calibLine.p1.y);
@@ -171,13 +245,11 @@
         });
     }
 
-    // --- EVENT LISTENERS สำหรับสัมผัส & เมาส์ ---
     canvas.addEventListener('pointerdown', function(e) {
         if (!img.src) return;
         canvas.setPointerCapture(e.pointerId);
         activePointers.set(e.pointerId, e);
 
-        // กรณีแตะ 2 นิ้วขึ้นไป -> Zoom/Pan
         if (activePointers.size >= 2) {
             draggedPointRef = null;
             isPanning = false;
@@ -187,11 +259,10 @@
         }
 
         const imgPt = getImgCoords(e);
-
-        // ตรวจหาว่าผู้ใช้กดลงบนจุด Marking เพื่อเตรียมลากขยับหรือไม่
         const hitPoint = findNearestPoint(imgPt);
         if (hitPoint) {
-            draggedPointRef = hitPoint; // เข้าสู่สถานะลากจุด
+            draggedPointRef = hitPoint;
+            draw();
             return;
         }
 
@@ -206,7 +277,6 @@
         if (!img.src) return;
         activePointers.set(e.pointerId, e);
 
-        // การจัดการ Multi-touch Zoom
         if (activePointers.size >= 2) {
             const pts = Array.from(activePointers.values());
             const currentDist = Math.hypot(pts[0].clientX - pts[1].clientX, pts[0].clientY - pts[1].clientY);
@@ -220,7 +290,6 @@
             return;
         }
 
-        // กรณีอยู่ในสถานะกำลังลากจุด
         if (draggedPointRef) {
             const imgPt = getImgCoords(e);
             draggedPointRef.x = imgPt.x;
@@ -230,7 +299,6 @@
             return;
         }
 
-        // การลากย้ายภาพ
         if (isPanning && mode === 'pan') {
             panX = e.clientX - startPanX;
             panY = e.clientY - startPanY;
@@ -241,10 +309,10 @@
     canvas.addEventListener('pointerup', function(e) {
         if (!img.src) return;
 
-        // ปล่อยจุดที่กำลังลาก
         if (draggedPointRef) {
             draggedPointRef = null;
             activePointers.delete(e.pointerId);
+            draw();
             return;
         }
         
@@ -254,7 +322,6 @@
             return;
         }
 
-        // การจิ้มเพิ่มจุดใหม่ (ทำงานเฉพาะเมื่อไม่ใช่การลากขยับจุดหรือย้ายรูป)
         if (activePointers.size === 1 && !isPanning && mode !== 'pan') {
             const p = getImgCoords(e);
             
@@ -302,6 +369,7 @@
         activePointers.delete(e.pointerId);
         isPanning = false;
         draggedPointRef = null;
+        draw();
     });
 
     canvas.addEventListener('wheel', function(e) {
@@ -333,7 +401,6 @@
 
         const lineWidth = Math.max(2, (canvas.width / 400) / zoomScale);
 
-        // 1. วาดเส้นอ้างอิง Calibration (เส้นสีขาว)
         if (calibLine) {
             ctx.beginPath();
             ctx.lineWidth = lineWidth;
@@ -347,7 +414,6 @@
             drawPoint(calibLine.p2, '#ffffff');
         }
 
-        // 2. วาดเส้นวัดค่า Manual (เส้นสีแดง)
         measurements.forEach(m => {
             ctx.beginPath();
             ctx.lineWidth = lineWidth;
@@ -367,7 +433,6 @@
             }
         });
 
-        // 3. วาดเส้นร่างชั่วคราว
         if (points.length > 0) {
             ctx.beginPath();
             ctx.lineWidth = lineWidth;
@@ -384,6 +449,10 @@
         });
 
         ctx.restore();
+
+        if (draggedPointRef) {
+            drawMagnifier(draggedPointRef);
+        }
     }
 
     function drawPoint(p, color) {
@@ -393,7 +462,6 @@
         ctx.fillStyle = color;
         ctx.fill();
 
-        // เพิ่มวงกลมจางๆ รอบจุดเมื่อจุดนั้นกำลังถูกดึงลาก
         if (draggedPointRef === p) {
             ctx.beginPath();
             ctx.arc(p.x, p.y, radius * 3, 0, Math.PI * 2);
@@ -410,6 +478,48 @@
         ctx.shadowBlur = 4 / zoomScale;
         ctx.fillText(text, x, y);
         ctx.shadowBlur = 0;
+    }
+
+    function drawMagnifier(targetPt) {
+        const magSize = Math.min(canvas.width, canvas.height) * 0.28;
+        const magX = 20;
+        const magY = 20;
+        const zoomLevel = 4;
+
+        ctx.save();
+
+        ctx.beginPath();
+        ctx.arc(magX + magSize/2, magY + magSize/2, magSize/2, 0, Math.PI * 2);
+        ctx.clip();
+
+        ctx.fillStyle = '#1c1c1e';
+        ctx.fillRect(magX, magY, magSize, magSize);
+
+        ctx.translate(magX + magSize/2, magY + magSize/2);
+        ctx.scale(zoomLevel, zoomLevel);
+        ctx.translate(-targetPt.x, -targetPt.y);
+
+        ctx.drawImage(img, 0, 0);
+
+        ctx.restore();
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(magX + magSize/2, magY + magSize/2, magSize/2, 0, Math.PI * 2);
+        ctx.lineWidth = 4;
+        ctx.strokeStyle = '#0a84ff';
+        ctx.stroke();
+
+        const cx = magX + magSize/2;
+        const cy = magY + magSize/2;
+        ctx.beginPath();
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = '#30d158';
+        ctx.moveTo(cx - 15, cy); ctx.lineTo(cx + 15, cy);
+        ctx.moveTo(cx, cy - 15); ctx.lineTo(cx, cy + 15);
+        ctx.stroke();
+
+        ctx.restore();
     }
 
     function undo() {

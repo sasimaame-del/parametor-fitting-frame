@@ -62,6 +62,8 @@
         #toolbar { background: #2c2c2e; padding: 12px; display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; position: sticky; top: 0; z-index: 10; }
         button, label.btn { background: #0a84ff; color: white; border: none; padding: 10px 16px; border-radius: 8px; font-size: 14px; cursor: pointer; font-weight: bold; }
         button.active { background: #30d158; }
+        button.purple { background: #bf5af2; }
+        button.purple.active { background: #af52de; }
         button.warning { background: #ff9f0a; }
         button.danger { background: #ff453a; }
         input[type="file"] { display: none; }
@@ -92,6 +94,7 @@
         <input type="file" id="fileInput" accept="image/*">
         <button id="btnCalib" class="active" onclick="setMode('calib')">1. ตั้งสเกลอ้างอิง</button>
         <button id="btnMeasure" onclick="setMode('measure')">2. วัดระยะ (mm)</button>
+        <button id="btnPdSplit" class="purple" onclick="setMode('pdsplit')">2.1 วัด PD สองข้าง (R/L)</button>
         <button id="btnAngle" onclick="setMode('angle')">3. วัดองศา (°)</button>
         <button id="btnPan" onclick="setMode('pan')">🔍 ย้าย/ซูมรูป</button>
         <button onclick="resetZoom()">🎯 รีเซ็ตมุมมอง</button>
@@ -107,7 +110,6 @@
 </div>
 
 <script>
-    // ระบบ Login Validation
     function handleLogin(e) {
         e.preventDefault();
         const u = document.getElementById('username').value.trim();
@@ -122,7 +124,6 @@
         }
     }
 
-    // --- ส่วนงาน Canvas & Measurement ---
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
     const info = document.getElementById('info-panel');
@@ -178,11 +179,15 @@
         
         if (mode === 'calib') {
             document.getElementById('btnCalib').classList.add('active');
-            info.innerText = "โหมด 1: จิ้มปักจุด 2 จุด เพื่อกำหนดเส้นอ้างอิง (ลากจุดจะมีแว่นขยายช่วยเล็ง)";
+            info.innerText = "โหมด 1: จิ้มปักจุด 2 จุด เพื่อกำหนดเส้นอ้างอิง";
         } else if (mode === 'measure') {
             if (scale === 0) { alert("กรุณาทำขั้นตอนที่ 1 (ตั้งสเกลอ้างอิง) ก่อนครับ"); setMode('calib'); return; }
             document.getElementById('btnMeasure').classList.add('active');
-            info.innerText = "โหมด 2: จิ้มปักจุด 2 จุด เพื่อวัดระยะ Manual (ลากจุดจะมีแว่นขยายช่วยเล็ง)";
+            info.innerText = "โหมด 2: จิ้มปักจุด 2 จุด เพื่อวัดระยะ Manual";
+        } else if (mode === 'pdsplit') {
+            if (scale === 0) { alert("กรุณาทำขั้นตอนที่ 1 (ตั้งสเกลอ้างอิง) ก่อนครับ"); setMode('calib'); return; }
+            document.getElementById('btnPdSplit').classList.add('active');
+            info.innerText = "โหมด 2.1: จิ้มปัก 3 จุด [1.ตาดำขวา -> 2.กึ่งกลางจมูก -> 3.ตาดำซ้าย] เพื่อแยกค่า PD ขวา/ซ้าย";
         } else if (mode === 'angle') {
             document.getElementById('btnAngle').classList.add('active');
             info.innerText = "โหมด 3: จิ้มปักจุด 3 จุด เพื่อวัดองศา (°) [จุดที่ 2 คือจุดยอดมุม]";
@@ -238,6 +243,12 @@
             if (m.type === 'line') {
                 const distPx = Math.hypot(m.p2.x - m.p1.x, m.p2.y - m.p1.y);
                 m.val = (distPx * scale).toFixed(2) + ' mm';
+            } else if (m.type === 'pd_split') {
+                const distR_px = Math.hypot(m.p2.x - m.p1.x, m.p2.y - m.p1.y);
+                const distL_px = Math.hypot(m.p3.x - m.p2.x, m.p3.y - m.p2.y);
+                m.valR = (distR_px * scale).toFixed(2);
+                m.valL = (distL_px * scale).toFixed(2);
+                m.valTotal = ((distR_px + distL_px) * scale).toFixed(2);
             } else if (m.type === 'angle') {
                 const angle = calcAngle(m.p1, m.p2, m.p3);
                 m.val = angle.toFixed(1) + '°';
@@ -336,7 +347,7 @@
                         if (realMm && !isNaN(realMm) && parseFloat(realMm) > 0) {
                             scale = parseFloat(realMm) / distPx;
                             calibLine = { p1: points[0], p2: points[1], val: parseFloat(realMm).toFixed(2) + ' mm' };
-                            info.innerText = `ตั้งสเกลสำเร็จ: 1 px = ${(scale).toFixed(4)} mm (เริ่มวัดระยะเส้นสีแดงได้เลย)`;
+                            info.innerText = `ตั้งสเกลสำเร็จ: 1 px = ${(scale).toFixed(4)} mm`;
                             points = [];
                             setMode('measure');
                         } else {
@@ -348,6 +359,24 @@
                     const distPx = Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y);
                     const distMm = distPx * scale;
                     measurements.push({ type: 'line', p1: points[0], p2: points[1], val: distMm.toFixed(2) + ' mm' });
+                    points = [];
+                    draw();
+                } else if (mode === 'pdsplit' && points.length === 3) {
+                    const distR_px = Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y);
+                    const distL_px = Math.hypot(points[2].x - points[1].x, points[2].y - points[1].y);
+                    const valR = (distR_px * scale).toFixed(2);
+                    const valL = (distL_px * scale).toFixed(2);
+                    const valTotal = ((distR_px + distL_px) * scale).toFixed(2);
+
+                    measurements.push({
+                        type: 'pd_split',
+                        p1: points[0], // จุดตาดำขวา (OD)
+                        p2: points[1], // จุดสันจมูก (Center)
+                        p3: points[2], // จุดตาดำซ้าย (OS)
+                        valR: valR,
+                        valL: valL,
+                        valTotal: valTotal
+                    });
                     points = [];
                     draw();
                 } else if (mode === 'angle' && points.length === 3) {
@@ -401,6 +430,7 @@
 
         const lineWidth = Math.max(2, (canvas.width / 400) / zoomScale);
 
+        // 1. เส้นสเกลอ้างอิง (สีขาว)
         if (calibLine) {
             ctx.beginPath();
             ctx.lineWidth = lineWidth;
@@ -414,9 +444,11 @@
             drawPoint(calibLine.p2, '#ffffff');
         }
 
+        // 2. รายการเส้นวัดผลทั้งหมด
         measurements.forEach(m => {
             ctx.beginPath();
             ctx.lineWidth = lineWidth;
+
             if (m.type === 'line') {
                 ctx.strokeStyle = '#ff453a';
                 ctx.moveTo(m.p1.x, m.p1.y); ctx.lineTo(m.p2.x, m.p2.y);
@@ -424,6 +456,20 @@
                 drawText(m.val, (m.p1.x + m.p2.x)/2, (m.p1.y + m.p2.y)/2, '#ff453a');
                 drawPoint(m.p1, '#ff453a');
                 drawPoint(m.p2, '#ff453a');
+            } else if (m.type === 'pd_split') {
+                // เส้นจาก ตาดำขวา -> จมูก -> ตาดำซ้าย
+                ctx.strokeStyle = '#bf5af2';
+                ctx.moveTo(m.p1.x, m.p1.y); ctx.lineTo(m.p2.x, m.p2.y); ctx.lineTo(m.p3.x, m.p3.y);
+                ctx.stroke();
+
+                // ข้อความระบุค่า R และ L
+                drawText(`R: ${m.valR} mm`, (m.p1.x + m.p2.x)/2, (m.p1.y + m.p2.y)/2 + (15 / zoomScale), '#bf5af2');
+                drawText(`L: ${m.valL} mm`, (m.p2.x + m.p3.x)/2, (m.p2.y + m.p3.y)/2 + (15 / zoomScale), '#bf5af2');
+                drawText(`Total PD: ${m.valTotal} mm`, m.p2.x, m.p2.y - (20 / zoomScale), '#ffd60a');
+
+                drawPoint(m.p1, '#bf5af2'); // OD
+                drawPoint(m.p2, '#ffd60a'); // Bridge (จุดกลาง)
+                drawPoint(m.p3, '#bf5af2'); // OS
             } else if (m.type === 'angle') {
                 ctx.strokeStyle = '#ff9f0a';
                 ctx.moveTo(m.p1.x, m.p1.y); ctx.lineTo(m.p2.x, m.p2.y); ctx.lineTo(m.p3.x, m.p3.y);
@@ -433,10 +479,11 @@
             }
         });
 
+        // 3. เส้นร่างขณะกำลังปักจุด
         if (points.length > 0) {
             ctx.beginPath();
             ctx.lineWidth = lineWidth;
-            ctx.strokeStyle = (mode === 'calib') ? '#ffffff' : '#0a84ff';
+            ctx.strokeStyle = (mode === 'calib') ? '#ffffff' : (mode === 'pdsplit' ? '#bf5af2' : '#0a84ff');
             ctx.moveTo(points[0].x, points[0].y);
             for (let i = 1; i < points.length; i++) {
                 ctx.lineTo(points[i].x, points[i].y);
@@ -450,6 +497,7 @@
 
         ctx.restore();
 
+        // 4. แว่นขยายเฉพาะจุดขณะกำลังลาก
         if (draggedPointRef) {
             drawMagnifier(draggedPointRef);
         }

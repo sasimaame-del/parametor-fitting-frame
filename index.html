@@ -94,7 +94,7 @@
         <input type="file" id="fileInput" accept="image/*">
         <button id="btnCalib" class="active" onclick="setMode('calib')">1. ตั้งสเกลอ้างอิง</button>
         <button id="btnMeasure" onclick="setMode('measure')">2. วัดระยะ (mm)</button>
-        <button id="btnPdSplit" class="purple" onclick="setMode('pdsplit')">2.1 วัด PD สองข้าง (R/L)</button>
+        <button id="btnSplit" class="purple" onclick="setMode('split')">✂️ แบ่งเส้นระยะ</button>
         <button id="btnAngle" onclick="setMode('angle')">3. วัดองศา (°)</button>
         <button id="btnPan" onclick="setMode('pan')">🔍 ย้าย/ซูมรูป</button>
         <button onclick="resetZoom()">🎯 รีเซ็ตมุมมอง</button>
@@ -184,10 +184,10 @@
             if (scale === 0) { alert("กรุณาทำขั้นตอนที่ 1 (ตั้งสเกลอ้างอิง) ก่อนครับ"); setMode('calib'); return; }
             document.getElementById('btnMeasure').classList.add('active');
             info.innerText = "โหมด 2: จิ้มปักจุด 2 จุด เพื่อวัดระยะ Manual";
-        } else if (mode === 'pdsplit') {
+        } else if (mode === 'split') {
             if (scale === 0) { alert("กรุณาทำขั้นตอนที่ 1 (ตั้งสเกลอ้างอิง) ก่อนครับ"); setMode('calib'); return; }
-            document.getElementById('btnPdSplit').classList.add('active');
-            info.innerText = "โหมด 2.1: จิ้มปัก 3 จุด [1.ตาดำขวา -> 2.กึ่งกลางจมูก -> 3.ตาดำซ้าย] เพื่อแยกค่า PD ขวา/ซ้าย";
+            document.getElementById('btnSplit').classList.add('active');
+            info.innerText = "โหมดแบ่งเส้น: แตะเลือกเส้นวัดระยะที่ต้องการแบ่งจุด";
         } else if (mode === 'angle') {
             document.getElementById('btnAngle').classList.add('active');
             info.innerText = "โหมด 3: จิ้มปักจุด 3 จุด เพื่อวัดองศา (°) [จุดที่ 2 คือจุดยอดมุม]";
@@ -210,24 +210,44 @@
     }
 
     function findNearestPoint(imgPt) {
-        const threshold = Math.max(15, (canvas.width / 50) / zoomScale);
+        const threshold = Math.max(18, (canvas.width / 45) / zoomScale);
 
         for (let p of points) {
-            if (Math.hypot(p.x - imgPt.x, p.y - imgPt.y) < threshold) return p;
+            if (Math.hypot(p.x - imgPt.x, p.y - imgPt.y) < threshold) return { pt: p, type: 'standalone' };
         }
 
         if (calibLine) {
-            if (Math.hypot(calibLine.p1.x - imgPt.x, calibLine.p1.y - imgPt.y) < threshold) return calibLine.p1;
-            if (Math.hypot(calibLine.p2.x - imgPt.x, calibLine.p2.y - imgPt.y) < threshold) return calibLine.p2;
+            if (Math.hypot(calibLine.p1.x - imgPt.x, calibLine.p1.y - imgPt.y) < threshold) return { pt: calibLine.p1, type: 'calib' };
+            if (Math.hypot(calibLine.p2.x - imgPt.x, calibLine.p2.y - imgPt.y) < threshold) return { pt: calibLine.p2, type: 'calib' };
         }
 
         for (let m of measurements) {
-            if (Math.hypot(m.p1.x - imgPt.x, m.p1.y - imgPt.y) < threshold) return m.p1;
-            if (Math.hypot(m.p2.x - imgPt.x, m.p2.y - imgPt.y) < threshold) return m.p2;
-            if (m.p3 && Math.hypot(m.p3.x - imgPt.x, m.p3.y - imgPt.y) < threshold) return m.p3;
+            if (Math.hypot(m.p1.x - imgPt.x, m.p1.y - imgPt.y) < threshold) return { pt: m.p1, type: 'm_p1', parent: m };
+            if (Math.hypot(m.p2.x - imgPt.x, m.p2.y - imgPt.y) < threshold) return { pt: m.p2, type: 'm_p2', parent: m };
+            if (m.splitPt && Math.hypot(m.splitPt.x - imgPt.x, m.splitPt.y - imgPt.y) < threshold) return { pt: m.splitPt, type: 'm_split', parent: m };
+            if (m.p3 && Math.hypot(m.p3.x - imgPt.x, m.p3.y - imgPt.y) < threshold) return { pt: m.p3, type: 'm_p3', parent: m };
         }
 
         return null;
+    }
+
+    function findNearestLine(imgPt) {
+        const threshold = Math.max(15, (canvas.width / 50) / zoomScale);
+        for (let m of measurements) {
+            if (m.type === 'line') {
+                const dist = distToSegment(imgPt, m.p1, m.p2);
+                if (dist < threshold) return m;
+            }
+        }
+        return null;
+    }
+
+    function distToSegment(p, v, w) {
+        const l2 = (v.x - w.x)**2 + (v.y - w.y)**2;
+        if (l2 === 0) return Math.hypot(p.x - v.x, p.y - v.y);
+        let t = ((p.x - v.x) * (w.x - v.x) + (p.y - v.y) * (w.y - v.y)) / l2;
+        t = Math.max(0, Math.min(1, t));
+        return Math.hypot(p.x - (v.x + t * (w.x - v.x)), p.y - (v.y + t * (w.y - v.y)));
     }
 
     function recalculateMeasurements() {
@@ -241,14 +261,15 @@
 
         measurements.forEach(m => {
             if (m.type === 'line') {
-                const distPx = Math.hypot(m.p2.x - m.p1.x, m.p2.y - m.p1.y);
-                m.val = (distPx * scale).toFixed(2) + ' mm';
-            } else if (m.type === 'pd_split') {
-                const distR_px = Math.hypot(m.p2.x - m.p1.x, m.p2.y - m.p1.y);
-                const distL_px = Math.hypot(m.p3.x - m.p2.x, m.p3.y - m.p2.y);
-                m.valR = (distR_px * scale).toFixed(2);
-                m.valL = (distL_px * scale).toFixed(2);
-                m.valTotal = ((distR_px + distL_px) * scale).toFixed(2);
+                const totalPx = Math.hypot(m.p2.x - m.p1.x, m.p2.y - m.p1.y);
+                m.val = (totalPx * scale).toFixed(2) + ' mm';
+
+                if (m.splitPt) {
+                    const d1 = Math.hypot(m.splitPt.x - m.p1.x, m.splitPt.y - m.p1.y);
+                    const d2 = Math.hypot(m.p2.x - m.splitPt.x, m.p2.y - m.splitPt.y);
+                    m.val1 = (d1 * scale).toFixed(2) + ' mm';
+                    m.val2 = (d2 * scale).toFixed(2) + ' mm';
+                }
             } else if (m.type === 'angle') {
                 const angle = calcAngle(m.p1, m.p2, m.p3);
                 m.val = angle.toFixed(1) + '°';
@@ -270,9 +291,27 @@
         }
 
         const imgPt = getImgCoords(e);
-        const hitPoint = findNearestPoint(imgPt);
-        if (hitPoint) {
-            draggedPointRef = hitPoint;
+
+        if (mode === 'split') {
+            const targetLine = findNearestLine(imgPt);
+            if (targetLine) {
+                if (!targetLine.splitPt) {
+                    targetLine.splitPt = {
+                        x: (targetLine.p1.x + targetLine.p2.x) / 2,
+                        y: (targetLine.p1.y + targetLine.p2.y) / 2
+                    };
+                }
+                recalculateMeasurements();
+                draw();
+                setMode('measure');
+                info.innerText = "แบ่งเส้นสำเร็จ! สามารถลากจุดแบ่งตรงกลางเพื่อปรับระยะสองฝั่งได้เลย";
+            }
+            return;
+        }
+
+        const hit = findNearestPoint(imgPt);
+        if (hit) {
+            draggedPointRef = hit;
             draw();
             return;
         }
@@ -303,8 +342,23 @@
 
         if (draggedPointRef) {
             const imgPt = getImgCoords(e);
-            draggedPointRef.x = imgPt.x;
-            draggedPointRef.y = imgPt.y;
+            
+            if (draggedPointRef.type === 'm_split') {
+                const m = draggedPointRef.parent;
+                const v = m.p1;
+                const w = m.p2;
+                const l2 = (v.x - w.x)**2 + (v.y - w.y)**2;
+                if (l2 > 0) {
+                    let t = ((imgPt.x - v.x) * (w.x - v.x) + (imgPt.y - v.y) * (w.y - v.y)) / l2;
+                    t = Math.max(0, Math.min(1, t));
+                    draggedPointRef.pt.x = v.x + t * (w.x - v.x);
+                    draggedPointRef.pt.y = v.y + t * (w.y - v.y);
+                }
+            } else {
+                draggedPointRef.pt.x = imgPt.x;
+                draggedPointRef.pt.y = imgPt.y;
+            }
+
             recalculateMeasurements();
             draw();
             return;
@@ -333,7 +387,7 @@
             return;
         }
 
-        if (activePointers.size === 1 && !isPanning && mode !== 'pan') {
+        if (activePointers.size === 1 && !isPanning && mode !== 'pan' && mode !== 'split') {
             const p = getImgCoords(e);
             
             if (p.x >= 0 && p.x <= img.width && p.y >= 0 && p.y <= img.height) {
@@ -358,25 +412,7 @@
                 } else if (mode === 'measure' && points.length === 2) {
                     const distPx = Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y);
                     const distMm = distPx * scale;
-                    measurements.push({ type: 'line', p1: points[0], p2: points[1], val: distMm.toFixed(2) + ' mm' });
-                    points = [];
-                    draw();
-                } else if (mode === 'pdsplit' && points.length === 3) {
-                    const distR_px = Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y);
-                    const distL_px = Math.hypot(points[2].x - points[1].x, points[2].y - points[1].y);
-                    const valR = (distR_px * scale).toFixed(2);
-                    const valL = (distL_px * scale).toFixed(2);
-                    const valTotal = ((distR_px + distL_px) * scale).toFixed(2);
-
-                    measurements.push({
-                        type: 'pd_split',
-                        p1: points[0], // จุดตาดำขวา (OD)
-                        p2: points[1], // จุดสันจมูก (Center)
-                        p3: points[2], // จุดตาดำซ้าย (OS)
-                        valR: valR,
-                        valL: valL,
-                        valTotal: valTotal
-                    });
+                    measurements.push({ type: 'line', p1: points[0], p2: points[1], val: distMm.toFixed(2) + ' mm', splitPt: null });
                     points = [];
                     draw();
                 } else if (mode === 'angle' && points.length === 3) {
@@ -418,6 +454,21 @@
         return Math.acos(clampedCos) * (180 / Math.PI);
     }
 
+    function drawPerpendicularTick(p1, p2, atPoint, length) {
+        const dx = p2.x - p1.x;
+        const dy = p2.y - p1.y;
+        const len = Math.hypot(dx, dy);
+        if (len === 0) return;
+
+        const ux = -dy / len;
+        const uy = dx / len;
+
+        ctx.beginPath();
+        ctx.moveTo(atPoint.x - ux * length, atPoint.y - uy * length);
+        ctx.lineTo(atPoint.x + ux * length, atPoint.y + uy * length);
+        ctx.stroke();
+    }
+
     function draw() {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         if (!img.src) return;
@@ -429,8 +480,9 @@
         ctx.drawImage(img, 0, 0);
 
         const lineWidth = Math.max(2, (canvas.width / 400) / zoomScale);
+        const tickLength = Math.max(8, (canvas.width / 120) / zoomScale);
 
-        // 1. เส้นสเกลอ้างอิง (สีขาว)
+        // 1. เส้นตั้งสเกลอ้างอิง
         if (calibLine) {
             ctx.beginPath();
             ctx.lineWidth = lineWidth;
@@ -438,38 +490,45 @@
             ctx.moveTo(calibLine.p1.x, calibLine.p1.y);
             ctx.lineTo(calibLine.p2.x, calibLine.p2.y);
             ctx.stroke();
+
+            drawPerpendicularTick(calibLine.p1, calibLine.p2, calibLine.p1, tickLength);
+            drawPerpendicularTick(calibLine.p1, calibLine.p2, calibLine.p2, tickLength);
+
             drawText(calibLine.val + ' (Ref)', (calibLine.p1.x + calibLine.p2.x)/2, (calibLine.p1.y + calibLine.p2.y)/2 - (10 / zoomScale), '#ffffff');
             
             drawPoint(calibLine.p1, '#ffffff');
             drawPoint(calibLine.p2, '#ffffff');
         }
 
-        // 2. รายการเส้นวัดผลทั้งหมด
+        // 2. รายการเส้นวัดระยะ
         measurements.forEach(m => {
             ctx.beginPath();
             ctx.lineWidth = lineWidth;
 
             if (m.type === 'line') {
                 ctx.strokeStyle = '#ff453a';
-                ctx.moveTo(m.p1.x, m.p1.y); ctx.lineTo(m.p2.x, m.p2.y);
-                ctx.stroke();
-                drawText(m.val, (m.p1.x + m.p2.x)/2, (m.p1.y + m.p2.y)/2, '#ff453a');
-                drawPoint(m.p1, '#ff453a');
-                drawPoint(m.p2, '#ff453a');
-            } else if (m.type === 'pd_split') {
-                // เส้นจาก ตาดำขวา -> จมูก -> ตาดำซ้าย
-                ctx.strokeStyle = '#bf5af2';
-                ctx.moveTo(m.p1.x, m.p1.y); ctx.lineTo(m.p2.x, m.p2.y); ctx.lineTo(m.p3.x, m.p3.y);
+                ctx.moveTo(m.p1.x, m.p1.y); 
+                ctx.lineTo(m.p2.x, m.p2.y);
                 ctx.stroke();
 
-                // ข้อความระบุค่า R และ L
-                drawText(`R: ${m.valR} mm`, (m.p1.x + m.p2.x)/2, (m.p1.y + m.p2.y)/2 + (15 / zoomScale), '#bf5af2');
-                drawText(`L: ${m.valL} mm`, (m.p2.x + m.p3.x)/2, (m.p2.y + m.p3.y)/2 + (15 / zoomScale), '#bf5af2');
-                drawText(`Total PD: ${m.valTotal} mm`, m.p2.x, m.p2.y - (20 / zoomScale), '#ffd60a');
+                drawPerpendicularTick(m.p1, m.p2, m.p1, tickLength);
+                drawPerpendicularTick(m.p1, m.p2, m.p2, tickLength);
 
-                drawPoint(m.p1, '#bf5af2'); // OD
-                drawPoint(m.p2, '#ffd60a'); // Bridge (จุดกลาง)
-                drawPoint(m.p3, '#bf5af2'); // OS
+                if (m.splitPt) {
+                    drawPerpendicularTick(m.p1, m.p2, m.splitPt, tickLength * 1.2);
+
+                    drawText(`L1: ${m.val1}`, (m.p1.x + m.splitPt.x)/2, (m.p1.y + m.splitPt.y)/2 + (15 / zoomScale), '#bf5af2');
+                    drawText(`L2: ${m.val2}`, (m.splitPt.x + m.p2.x)/2, (m.splitPt.y + m.p2.y)/2 + (15 / zoomScale), '#bf5af2');
+                    drawText(`Total: ${m.val}`, (m.p1.x + m.p2.x)/2, (m.p1.y + m.p2.y)/2 - (15 / zoomScale), '#ffd60a');
+
+                    drawPoint(m.p1, '#ff453a');
+                    drawPoint(m.p2, '#ff453a');
+                    drawPoint(m.splitPt, '#bf5af2');
+                } else {
+                    drawText(m.val, (m.p1.x + m.p2.x)/2, (m.p1.y + m.p2.y)/2 - (10 / zoomScale), '#ff453a');
+                    drawPoint(m.p1, '#ff453a');
+                    drawPoint(m.p2, '#ff453a');
+                }
             } else if (m.type === 'angle') {
                 ctx.strokeStyle = '#ff9f0a';
                 ctx.moveTo(m.p1.x, m.p1.y); ctx.lineTo(m.p2.x, m.p2.y); ctx.lineTo(m.p3.x, m.p3.y);
@@ -479,11 +538,11 @@
             }
         });
 
-        // 3. เส้นร่างขณะกำลังปักจุด
+        // 3. เส้นวาดระหว่างกดปักจุด
         if (points.length > 0) {
             ctx.beginPath();
             ctx.lineWidth = lineWidth;
-            ctx.strokeStyle = (mode === 'calib') ? '#ffffff' : (mode === 'pdsplit' ? '#bf5af2' : '#0a84ff');
+            ctx.strokeStyle = (mode === 'calib') ? '#ffffff' : '#0a84ff';
             ctx.moveTo(points[0].x, points[0].y);
             for (let i = 1; i < points.length; i++) {
                 ctx.lineTo(points[i].x, points[i].y);
@@ -497,20 +556,20 @@
 
         ctx.restore();
 
-        // 4. แว่นขยายเฉพาะจุดขณะกำลังลาก
+        // 4. แว่นขยายขณะกำลังลากจุด
         if (draggedPointRef) {
-            drawMagnifier(draggedPointRef);
+            drawMagnifier(draggedPointRef.pt);
         }
     }
 
     function drawPoint(p, color) {
-        const radius = Math.max(1.5, (canvas.width / 600) / zoomScale);
+        const radius = Math.max(2, (canvas.width / 500) / zoomScale);
         ctx.beginPath();
         ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
         ctx.fillStyle = color;
         ctx.fill();
 
-        if (draggedPointRef === p) {
+        if (draggedPointRef && draggedPointRef.pt === p) {
             ctx.beginPath();
             ctx.arc(p.x, p.y, radius * 3, 0, Math.PI * 2);
             ctx.fillStyle = "rgba(255, 214, 10, 0.4)";
